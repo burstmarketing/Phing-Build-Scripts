@@ -1,0 +1,267 @@
+<?xml version="1.0"?>
+
+<project name="build.process" description="build file defining tasks to be executed" default="main" >
+
+  <resolvepath propertyName="build.basedir" file="${project.basedir}/.." />
+  <resolvepath propertyName="httpdocs" file="${project.basedir}/../.." />
+  <property name="build.builddir" value="${build.basedir}/build" />
+  <property name="build.configdir" value="${build.basedir}/config" />
+  <property name="build.projectdir" value="${build.basedir}/project" />
+  <property name="build.projectdir.database" value="${build.projectdir}/database" />
+
+  <property name="build.projectdir.siteconfigs" value="${build.projectdir}/site-configs" />
+
+  <property name="build.project.ini" value="project_environment.ini" />
+  <property name="build.installation.ini" value="installation_environment.ini" />
+
+  <property name="build.version" value="2.1.7" />  
+  
+  <import file="${build.builddir}/lib/tasks.xml" />
+
+  <target name="make_dirs" depends="custom_tasks" description="Make the config and project directories">
+    <mkdir dir="${build.configdir}"/>
+    <mkdir dir="${build.projectdir}"/>
+    <mkdir dir="${build.projectdir.siteconfigs}" />
+    <mkdir dir="${build.projectdir.database}" />
+
+    <!-- make sure the user/apache has set the config dir so apache can write to it-->
+    <exec command="chmod 775 ${build.configdir}" />
+    <exec command="/root/bin/wrappers/prep_dir ${build.configdir}" />   
+
+  </target>
+
+  <target name="set_project_environment" depends="make_dirs" description="set the current environment">
+       <genenvconfig
+	   fileName="${build.project.ini}"
+	   dir="${build.projectdir}" />
+  </target>
+
+ <target name="load_project_environment" depends="make_dirs" description="sets site props for a particular hosting environment">  
+   <if>
+     <not>
+       <available file="${build.projectdir}/${build.project.ini}" />
+     </not>
+     <then>
+       <genenvconfig
+	   fileName="${build.project.ini}"
+	   dir="${build.projectdir}" />
+     </then>
+     <else>
+       <property file="${build.projectdir}/${build.project.ini}" />
+     </else>
+   </if>
+ </target>
+
+<target name="set_installation_environment" depends="make_dirs" description="set the current environment">
+       <geninstallationconfig
+	   fileName="${build.installation.ini}"
+	   dir="${build.configdir}" />
+  </target>
+
+ <target name="load_installation_environment" depends="make_dirs" description="sets site props for a particular hosting environment">  
+   <if>
+     <not>
+       <available file="${build.configdir}/${build.installation.ini}" />
+     </not>
+     <then>
+       <geninstallationconfig
+	   fileName="${build.installation.ini}"
+	   dir="${build.configdir}" />
+     </then>
+     <else>
+       <property file="${build.configdir}/${build.installation.ini}" />
+     </else>
+   </if>
+ </target>
+
+ <target name="create_installation_config" depends="make_dirs,load_project_environment" description="gets the props,  either from props.ini or via input props">
+
+   <propertyprompt propertyName="db"
+		   promptText="Database Identifier? (${database.types})"
+		   useExistingValue="true" />
+   
+   
+   <property name="build.installationprops.string" value="${build.configdir}/installation.${db}.props.ini" />
+   <if>
+     <available file="${build.installationprops.string}" />
+     <then>
+       <shellproperty file="${build.installationprops.string}" />
+     </then>
+     <else>
+       <gendbconfig
+	   envIdentifier="installation"
+	   dbIdentifier="${db}"
+	   shellEscape="true"
+	   dir="${build.configdir}" />       
+     </else>
+   </if>
+ </target>
+ 
+ <target name="check_install_config_exists" depends="make_dirs" description="checks if a config exists,  if not it generates it" >
+   <fail unless="db" message="check_install_config_exists requires 'db' property to be set" />
+   <if>
+     <not>
+       <available file="${build.configdir}/installation.${db}.props.ini" />
+     </not>
+     <then>
+       <gendbconfig
+	   envIdentifier="installation"
+	   dbIdentifier="${db}"
+	   loadVars="false"
+	   dir="${build.configdir}" />       
+     </then>
+   </if>
+ </target>
+
+
+  <target name="copy_configs" depends="load_project_environment,make_dirs" description="This copies the configs and replaces values with correct db info">
+    
+    <foreach list="${database.types}" param="db" target="check_install_config_exists" />
+    
+    <loadfiles>
+      <fileset dir='${build.configdir}'>
+	<include name="installation.*.ini" />
+      </fileset>
+    </loadfiles>
+
+
+    <copy todir="${build.configdir}" overwrite="true"> 
+      <filterchain>
+	<expandproperties />
+      </filterchain>
+      <fileset dir='${build.projectdir.siteconfigs}'>
+	<include name="**" />
+	<exclude name="**/.svn/**"/>
+      </fileset>
+    </copy>
+  </target>
+  
+  <target name="get_db" depends="load_project_environment,load_installation_environment" description="copy the staging database into the current installation database.">
+    <fail unless="environment.project" message="'environment.project' variable must be set when calling get_db" />
+    <fail unless="environment.installation" message="'environment.installation' variable must be set when calling get_db" />
+    <fail unless="db" message="'db' variable must be set when calling get_db" />
+    
+
+    <if>
+      <not>
+	<equals arg1="${environment.project}" arg2="${environment.installation}" trim="true"/>
+      </not>
+      <then>
+	
+	<property name="build.db.fromfile.string" value="${build.projectdir}/${environment.project}.${db}.props.ini" />
+	<property name="build.db.tofile.string" value="${build.configdir}/installation.${db}.props.ini" />
+	
+	<if>
+	  <available file="${build.db.tofile.string}" />
+	  <then>
+	    <shellproperty file="${build.db.tofile.string}" />
+	  </then>
+	  <else>
+	    <gendbconfig
+		envIdentifier="installation"
+		dbIdentifier="${db}"
+		shellEscape="true"
+		dir="${build.configdir}" />       
+	  </else>
+	</if>
+	
+	<if>
+	  <available file="${build.db.fromfile.string}" />
+	  <then>
+	    <shellproperty file="${build.db.fromfile.string}" />
+	  </then>
+	  <else>
+	    <gendbconfig
+		envIdentifier="${environment.project}"
+		dbIdentifier="${db}"
+		shellEscape="true"
+		dir="${build.projectdir}" />
+	  </else>
+	</if>
+	
+	<!-- dump the db, replace the siteurl, and import the sql -->
+   
+	<property name="build.db.dump.string" value="${build.configdir}/${${environment.project}.${db}.props.db.name}.sql" />
+	
+	<exec command="mysqldump  -u${${environment.project}.${db}.props.db.user} -p${${environment.project}.${db}.props.db.password} --host='${${environment.project}.${db}.props.db.host}' ${${environment.project}.${db}.props.db.name}" output="${build.db.dump.string}" dir="${build.configdir}" />
+	
+	<reflexive>
+	  <fileset dir="${build.configdir}">
+	    <include name="${${environment.project}.${db}.props.db.name}.sql"/>
+	  </fileset>
+	  <filterchain>
+	    <replaceregexp>
+	      <regexp pattern="${${environment.project}.${db}.props.url.siteurl}" replace="${installation.${db}.props.url.siteurl}" ignoreCase="true"/>
+	    </replaceregexp>
+	  </filterchain>
+	</reflexive>
+	<!-- DROP the database then CREATE the database-->
+	
+	<exec command="mysql -u${installation.${db}.props.db.user} -p${installation.${db}.props.db.password} --host='${installation.${db}.props.db.host}' -e 'DROP DATABASE IF EXISTS ${installation.${db}.props.db.name}; CREATE DATABASE ${installation.${db}.props.db.name}'" dir="${build.configdir}" />
+	
+	<customexec command="mysql -u${installation.${db}.props.db.user} -p${installation.${db}.props.db.password} --host='${installation.${db}.props.db.host}' ${installation.${db}.props.db.name}" input="${build.db.dump.string}" dir="${build.configdir}"  />
+	
+	<exec command="rm ${build.db.dump.string}" dir="${build.configdir}" />
+	
+	
+      </then>
+    </if>
+  </target>  
+  
+  <target name="update.db" depends="load_project_environment" description="get all databases for the current environment" >
+    <if>
+      <istrue value="${database.types}" />
+      <then>
+	<foreach list="${database.types}" param="db" target="get_db" />
+      </then>
+      <else>
+	<fail message="database.types must be set in the environment.ini 1" />
+      </else>
+    </if>
+  </target>
+  
+  <target name="update.code" description="run svn update then update the db and copy the configs.  update the db first so we create db info if none exists,  otherwise the copy_configs will have no loaded var's to expand">
+
+
+    <propertyprompt propertyName="svn.username"
+		    useExistingValue="true"
+		    promptText="Subversion Username?" />
+
+    <exec command='stty -echo' outputProperty="stty.orig" />
+    <propertyprompt propertyName="svn.password"
+   		    useExistingValue="true"
+		    promptText="Subversion Password?" />
+
+    <exec command="stty echo" />
+
+    <svnupdate
+       svnpath="/usr/bin/svn"
+       username="${svn.username}"
+       password="${svn.password}"
+       nocache="true"
+       recursive="true"
+       todir="${httpdocs}"/>
+
+<!--  <exec command='svn update' dir='${build.basedir}' logoutput="true"/> -->
+  
+  </target>
+
+  <target name="update.configs" depends="copy_configs" description="copy configs replacing vars as needed" />
+
+  <target name="update.all" description="update everything" depends="update.code,update.db,update.configs" />
+
+  <target name="update.configs_and_db" description="update just the configs and the db" depends="update.db,update.configs" />
+  
+
+  <target name="test" depends="custom_tasks">
+    <if>
+      <referenceexists ref="ShellPropertyTask" />
+      <then>
+	<echo>blah!</echo>
+      </then>
+    </if>
+  </target>
+
+</project>
+
+

@@ -1,0 +1,22 @@
+2.1.7 - fixing problem with get_db,  does not create database properly if it doesn't exist
+2.1.6 - make sure make_dir sets the config dir to 775 so apache can write to it
+2.1.5 - small update to add useExisting to a few props so we can pass these in on update.code for
+        the web interface
+2.1.4 - add update.configs_and_db  wrapper to allow the development server to have one target call.
+        multiple target calles from a seperate build process cause class redefinition conflicts in the custom_tasks
+	target. (lame!)
+2.1.3 - make sure site-configs folder is created.
+2.1.2 - Add installation environment file to avoid doing a get_db on the same environment as the project
+
+2.1.1 - Restructure directory so that: 
+      		    config is unversioned and contains installation specific files and data  
+		    project is versioned and contains project specific files and data
+		    build should be files that are contained in external repo 
+
+2.1.0 - Move custom tasks into ad-hock task defs in the lib/ folder. More portablility. 
+
+2.0.2 - added project_environment.ini to .build dir to track vars that are project wide,  setting up to add an installation_envrionment.ini  to track installation specific variables. added GenDBConfigTask and GenEnvConfigTasks  to clean up slopy _loadProps and _loadEnvironment tasks (now removed). 
+
+2.0.1 - loadFilesTask custom task added to make copy_configs target more readable.
+
+2.0.0 - initial working version of build system,  includes update.db, update.configs, update.code and update.all

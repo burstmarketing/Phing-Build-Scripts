@@ -1,0 +1,318 @@
+
+<project name="customtasks" description="Simple test build file" >
+  <target name="custom_tasks" description="set up custom tasks">
+    <adhoc-task name="shellproperty"><![CDATA[ 
+    class ShellPropertyTask extends PropertyTask {
+
+    /**
+     * add a name value pair to the project property set
+     * @param string $name name of property
+     * @param string $value value to set
+     */
+    protected function addProperty($name, $value) {
+        if ($this->userProperty) {
+            if ($this->project->getUserProperty($name) === null || $this->override) {
+                $this->project->setInheritedProperty($name, escapeshellcmd($value));
+            } else {
+                $this->log("Override ignored for " . $name, Project::MSG_VERBOSE);
+            }
+        } else {
+            if ($this->override) {
+                $this->project->setProperty($name, escapeshellcmd($value));
+            } else {
+                $this->project->setNewProperty($name, escapeshellcmd($value));
+            }
+        }
+    }
+
+
+    }]]>
+    </adhoc-task>
+
+    <adhoc-task name="customexec"><![CDATA[ 
+    class CustomExecTask extends ExecTask {
+
+    /**
+     * Where to pull input.
+     * @var File
+     */
+    protected $input;
+
+
+    /**
+     * Executes a program and returns the return code.
+     * Output from command is logged at INFO level.
+     * @return int Return code from execution.
+     */
+    public function execute() {
+
+        // test if os match
+        $myos = Phing::getProperty("os.name");
+        $this->log("Myos = " . $myos, Project::MSG_VERBOSE);
+        if (($this->os !== null) && (strpos($this->os, $myos) === false)) {
+            // this command will be executed only on the specified OS
+            $this->log("Not found in " . $this->os, Project::MSG_VERBOSE);
+            return 0;
+        }
+
+        if ($this->dir !== null) {
+            // expand any symbolic links first
+            if ($this->dir->getCanonicalFile()->isDirectory()) {
+                $currdir = getcwd();
+                @chdir($this->dir->getPath());
+            } else {
+                throw new BuildException("'" . (string) $this->dir . "' is not a valid directory");
+            }
+        }
+
+
+        if ($this->escape == true) {
+            // FIXME - figure out whether this is correct behavior
+            $this->command = escapeshellcmd($this->command);
+        }
+
+        if ($this->error !== null) {
+            $this->command .= ' 2> ' . $this->error->getPath();
+            $this->log("Writing error output to: " . $this->error->getPath(), $this->logLevel);
+        }
+
+        if ($this->output !== null) {
+            $this->command .= ' 1> ' . $this->output->getPath();
+            $this->log("Writing standard output to: " . $this->output->getPath(), $this->logLevel);
+        } elseif ($this->spawn) {
+          $this->command .= ' 1>/dev/null';
+            $this->log("Sending ouptut to /dev/null", $this->logLevel);
+        }
+
+        if ($this->input !== null) {
+            $this->command .= ' < ' . $this->input->getPath();
+            $this->log("Reading from standard input: " . $this->input->getPath(), $this->logLevel);
+        }
+
+
+        // If neither output nor error are being written to file
+        // then we'll redirect error to stdout so that we can dump
+        // it to screen below.
+
+        if ($this->output === null && $this->error === null) {
+            $this->command .= ' 2>&1';
+        }
+
+        // we ignore the spawn boolean for windows
+        if ($this->spawn) {
+            $this->command .= ' &';
+        }
+
+        $this->log("Executing command: " . $this->command, $this->logLevel);
+
+        $output = array();
+        $return = null;
+        
+        if ($this->passthru)
+        {
+            passthru($this->command, $return);
+        }
+        else
+        {
+            exec($this->command, $output, $return);
+        }
+
+        if ($this->dir !== null) {
+            @chdir($currdir);
+        }
+
+        foreach($output as $line) {
+            $this->log($line,  ($this->logOutput ? Project::MSG_INFO : Project::MSG_VERBOSE));
+        }
+
+        if ($this->returnProperty) {
+            $this->project->setProperty($this->returnProperty, $return);
+        }
+
+        if ($this->outputProperty) {
+            $this->project->setProperty($this->outputProperty, implode("\n", $output));
+        }
+        if($return != 0 && $this->checkreturn) {
+            throw new BuildException("Task exited with code $return");
+        }
+
+        return $return;
+    }
+
+
+
+    /**
+     * File from which input should be read.
+     * @param PhingFile $output
+     */
+    function setInput(PhingFile $f) {
+        $this->input = $f;
+    }
+
+}
+
+    ]]>
+    </adhoc-task>
+    <adhoc-task name="loadfiles"><![CDATA[ 
+    class LoadFilesTask extends PropertyTask {
+
+
+      protected $filesets      = array();
+      
+      function main(){
+        $project = $this->getProject();
+
+         foreach($this->filesets as $fs) {
+            $ds = $fs->getDirectoryScanner($project);
+            $dir  = $fs->getDir($project);
+            $files = $ds->getIncludedFiles();
+
+            foreach( $files AS $file_name ){
+                     $file = new PhingFile($dir . "/" . $file_name);
+                     $this->loadFile($file);
+            }
+            
+         }
+      }
+
+      function createFileSet() {
+          $num = array_push($this->filesets, new FileSet());
+          return $this->filesets[$num-1];
+      }
+
+    }
+        
+    ]]>
+    </adhoc-task>
+    <adhoc-task name="gendbconfig"><![CDATA[ 
+    class GenDBConfigTask extends Task {
+
+       private $envIdentifier = "";
+
+       private $dbIdentifier = "";
+
+       protected $dir;
+
+       protected $loadVars = true;
+
+       protected $shellEscape = false;
+       
+       protected $_queries = array();
+
+       function setEnvIdentifier( $str ){ $this->envIdentifier = $str; }
+       function setDbIdentifier( $str ){ $this->dbIdentifier = $str; }
+       function setLoadVars( $str ){ $this->loadVars = $str; }
+       function setShellEscape( $str ){ $this->shellEscape = $str; }
+       function setDir( $str ){ $this->dir = $str; }
+       
+       function init(){
+          $this->_queries = array( "props.db.name" => "Database Name?",
+                                  "props.db.user" => "Database User Name?",
+                                  "props.db.password" => "Database Password?",
+                                  "props.db.host" => "Database Host?",
+                                  "props.url.siteurl" => "Database Url?" );
+       }
+
+      function main(){
+           $propertiesString = "";
+
+           foreach( $this->_queries AS $key => $question ):
+                       
+               $request = new InputRequest($this->_processQuestion( $question ));
+               
+               $this->project->getInputHandler()->handleInput($request);
+
+               $name = $this->_getIdentString($key);
+               $value = $request->getInput();
+
+               $propertiesString .= $name . "=" . $value . PHP_EOL;
+
+               if( $this->loadVars ):
+                   if( $this->shellEscape ):
+                       $this->project->setProperty( $name, escapeshellcmd($value) );
+                   else:
+                       $this->project->setProperty( $name, $value );
+                   endif;
+               endif;
+                                                        
+           endforeach;
+       
+           if(!file_put_contents( $this->_getFileString() , $propertiesString)):
+               throw new BuildException('Failed writing to ' . $this->_getFileString() );
+           endif;
+ 
+
+       }
+       protected function _processQuestion( $str ){
+                 return "'" . $this->dbIdentifier  . " " . $this->envIdentifier  . "' " . $str;
+       }
+
+       protected function _getFileString(){
+           return $this->dir . "/" . $this->_getIdentString("props.ini");
+       }
+
+       protected function _getIdentString( $str = "" ){
+
+           if( $this->envIdentifier !== null || $this->dbIdentifier !== null ):
+               $identstr = $this->envIdentifier . "." . $this->dbIdentifier;
+               if( (bool) $str ): $identstr .= "." . $str; endif;
+               return $identstr;
+           else:
+               throw new BuildException("Environment and Database identifier must be set.");
+           endif;
+
+       }
+
+}
+
+
+    ]]>
+    </adhoc-task>
+    <adhoc-task name="genenvconfig"><![CDATA[ 
+    class GenEnvConfigTask extends GenDBConfigTask {
+       private $fileName = "";
+
+       public function setFileName( $str ){ $this->fileName = $str; }
+       function setDir( $str ){ $this->dir = $str; }
+
+       function init(){
+          $this->_queries = array("environment.project" => "Project Environment?",
+                                  "database.types" => "Database Identifiers?"
+                                  );
+       }
+
+       protected function _getIdentString( $str = "" ){ return $str; }
+
+       protected function _processQuestion( $str ){ return $str; }
+
+       protected function _getFileString(){ 
+           return $this->dir . "/" . $this->fileName;
+       }
+}
+]]>
+    </adhoc-task>
+    <adhoc-task name="geninstallationconfig"><![CDATA[ 
+    class GenInstallationConfigTask extends GenDBConfigTask {
+       private $fileName = "";
+
+       public function setFileName( $str ){ $this->fileName = $str; }
+       function setDir( $str ){ $this->dir = $str; }
+
+       function init(){
+          $this->_queries = array("environment.installation" => "Installation Environment?");
+       }
+
+       protected function _getIdentString( $str = "" ){ return $str; }
+
+       protected function _processQuestion( $str ){ return $str; }
+
+       protected function _getFileString(){ 
+           return $this->dir . "/" . $this->fileName;
+       }
+}
+]]>
+    </adhoc-task>
+
+  </target>
+
+</project>
